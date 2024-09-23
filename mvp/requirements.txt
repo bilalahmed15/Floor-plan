@@ -1,0 +1,6 @@
+Flask
+PyPDF2
+Pillow
+gunicorn
+ultralytics
+openpyxl

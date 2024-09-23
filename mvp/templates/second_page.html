@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Viewer with Annotations</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: #2e4053;
+            background-image: url('C:\Users\OLASGADGET\Desktop\VScode\Floor plan detection system\3.jpg');
+           background-size: cover;
+           background-position: center;
+           background-blend-mode: overlay;
+        }
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        .controls {
+            width: 200px;
+            padding: 20px;
+            background-color: #fff;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-radius: 5px;
+            margin: 20px;
+        }
+
+        .controls h2 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .controls label {
+            display: block;
+            margin-top: 10px;
+            font-weight: bold;
+            color: #555;
+        }
+
+        .controls input,
+        .controls select,
+        .controls button {
+            width: 100%;
+            margin-top: 5px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+            background-color: #f9f9f9;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .controls button {
+            cursor: pointer;
+            background-color: #fff;
+            color: #000000;
+        }
+
+        .controls button:hover {
+            background-color: #2e4053;
+            color: #ffffff;
+        }
+
+        #pdf-viewer-container {
+            flex-grow: 1;
+            position: relative;
+            overflow: auto;
+            margin: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            background-color: #fff;
+        }
+        #pdf-viewer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform-origin: 0 0;
+        }
+        #pdf-canvas, #drawing-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #loader {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 70%;
+        
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 5px;
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+        
+        .loader-text {
+            font-size: 16px;
+            text-align: center;
+        }
+
+        /* Add more custom styles and animations as needed */
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="controls">
+            <h2>PDF Viewer Controls</h2>
+            <label for="file-input">Select PDF File:</label>
+            <input type="file" id="file-input" accept="application/pdf">
+            <label for="page-number">Page:</label>
+            <input type="number" id="page-number" min="1" value="1">
+            <label for="annotation-tool">Tool:</label>
+            <select id="annotation-tool">
+                <option value="Polygon" selected>Polygon</option>
+                <option value="None">None</option>
+                <option value="Freehand">Freehand</option>
+                <option value="Rectangle">Rectangle</option>
+                <option value="Highlight">Highlight</option>
+            </select>
+            <label for="annotation-color">Color:</label>
+            <input type="color" id="annotation-color" value="#FF0000">
+            <label for="pen-size">Pen Size:</label>
+            <input type="range" id="pen-size" min="1" max="10" step="1" value="2">
+            <button id="undo-btn">Undo</button>
+            <button id="redo-btn">Redo</button>
+            <button id="confirm-btn">Confirm Annotation</button>
+            <button id="detect-rooms-btn" onclick="detectRoomsSymbols()">Detect Rooms Symbols</button>
+            <button id="zoom-in-btn">Zoom In</button>
+            <button id="zoom-out-btn">Zoom Out</button>
+            <button id="best-fit-btn">Best Fit</button>
+        </div>
+        <div id="pdf-viewer-container">
+            <div id="pdf-viewer">
+                <canvas id="pdf-canvas"></canvas>
+                <canvas id="drawing-canvas"></canvas>
+            </div>
+        </div>
+    </div>
+    <div id="loader" class="loader-text">Loading...</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.min.js"></script>
+    <script>
+        // Get DOM elements
+        const fileInput = document.getElementById('file-input');
+        const pageInput = document.getElementById('page-number');
+        const annotationToolSelect = document.getElementById('annotation-tool');
+        const annotationColorInput = document.getElementById('annotation-color');
+        const penSizeInput = document.getElementById('pen-size');
+        const pdfViewerContainer = document.getElementById('pdf-viewer-container');
+        const pdfViewer = document.getElementById('pdf-viewer');
+        const pdfCanvas = document.getElementById('pdf-canvas');
+        const drawingCanvas = document.getElementById('drawing-canvas');
+        const pdfContext = pdfCanvas.getContext('2d');
+        const drawContext = drawingCanvas.getContext('2d');
+        const loader = document.getElementById('loader');
+        const undoBtn = document.getElementById('undo-btn');
+        const redoBtn = document.getElementById('redo-btn');
+        const confirmBtn = document.getElementById('confirm-btn');
+        const zoomInBtn = document.getElementById('zoom-in-btn');
+        const zoomOutBtn = document.getElementById('zoom-out-btn');
+        const bestFitBtn = document.getElementById('best-fit-btn');
+
+       // Initialize variables
+    
+        // Initialize variables
+let pdfDoc = null;
+let scale = 1;
+let zoomLevel = 1;
+let annotations = [];
+let undoStack = [];
+let redoStack = [];
+let currentPage = 1;
+let drawing = false;
+let startX, startY;
+let penSize = parseInt(penSizeInput.value);
+let currentColor = annotationColorInput.value;
+let polygonPoints = [];  // Initialize the array to store polygon points
+let isDrawingPolygon = true;  // Set to true by default
+let currentTool = 'Polygon';  // Set the default tool to Polygon
+
+// Add this after initializing the DOM elements
+annotationToolSelect.value = 'Polygon';  // Set the default selected option
+
+// Update the annotation tool select event listener
+annotationToolSelect.addEventListener('change', () => {
+    currentTool = annotationToolSelect.value;
+    if (currentTool === 'Polygon') {
+        isDrawingPolygon = true;
+    } else {
+        isDrawingPolygon = false;
+        if (polygonPoints.length > 0) {
+            // If there's an unfinished polygon, complete it
+            completePolygon();
+        }
+    }
+});
+
+// Update the mousedown event listener
+drawingCanvas.addEventListener('mousedown', event => {
+    if (currentTool === 'None') return;
+
+    const currentX = event.offsetX / zoomLevel;
+    const currentY = event.offsetY / zoomLevel;
+
+    if (currentTool === 'Polygon') {
+        if (!isDrawingPolygon) {
+            isDrawingPolygon = true;
+            polygonPoints = [];
+        }
+        polygonPoints.push({ x: currentX, y: currentY });
+        drawAnnotations();
+    } else if (currentTool === 'Freehand') {
+        drawing = true;
+        annotations.push({
+            type: 'freehand',
+            color: currentColor,
+            size: penSize,
+            points: [{ x: currentX, y: currentY }]
+        });
+    } else if (currentTool === 'Rectangle') {
+        drawing = true;
+        annotations.push({
+            type: 'rectangle',
+            color: currentColor,
+            size: penSize,
+            x: currentX,
+            y: currentY,
+            width: 0,
+            height: 0
+        });
+    } else if (currentTool === 'Highlight') {
+        drawing = true;
+        annotations.push({
+            type: 'highlight',
+            color: currentColor,
+            size: penSize,
+            x: currentX,
+            y: currentY,
+            width: 0,
+            height: 0
+        });
+    }
+});
+
+// Update the mousemove event listener
+drawingCanvas.addEventListener('mousemove', event => {
+    if (!drawing && currentTool !== 'Polygon') return;
+
+    const currentX = event.offsetX / zoomLevel;
+    const currentY = event.offsetY / zoomLevel;
+
+    if (currentTool === 'Polygon' && isDrawingPolygon) {
+        drawAnnotations();
+        // Draw a line from the last point to the current mouse position
+        drawContext.beginPath();
+        drawContext.moveTo(polygonPoints[polygonPoints.length - 1].x * zoomLevel, polygonPoints[polygonPoints.length - 1].y * zoomLevel);
+        drawContext.lineTo(currentX * zoomLevel, currentY * zoomLevel);
+        drawContext.stroke();
+    } else if (currentTool === 'Freehand') {
+        const currentAnnotation = annotations[annotations.length - 1];
+        currentAnnotation.points.push({ x: currentX, y: currentY });
+    } else if (currentTool === 'Rectangle' || currentTool === 'Highlight') {
+        const currentAnnotation = annotations[annotations.length - 1];
+        currentAnnotation.width = currentX - currentAnnotation.x;
+        currentAnnotation.height = currentY - currentAnnotation.y;
+    }
+
+    drawAnnotations();
+});
+
+// Update the mouseup event listener
+drawingCanvas.addEventListener('mouseup', event => {
+    if (currentTool !== 'Polygon') {
+        drawing = false;
+        drawAnnotations();
+        saveAnnotations(currentPage);
+    }
+});
+
+// File input change event
+fileInput.addEventListener('change', event => {
+    const file = event.target.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+
+    loader.style.display = 'block';
+
+    fetch('/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        const { base64_pdf, total_pages } = data;
+        pdfDoc = null;
+        pageInput.setAttribute('max', total_pages);
+        renderPDF(base64_pdf);
+        loader.style.display = 'none';
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        loader.style.display = 'none';
+    });
+});
+
+// Page number input event
+pageInput.addEventListener('input', () => {
+    currentPage = parseInt(pageInput.value);
+    if (pdfDoc) {
+        renderPage(currentPage);
+        loadAnnotations(currentPage);
+    }
+});
+
+// Pen size input event
+penSizeInput.addEventListener('input', () => {
+    penSize = parseInt(penSizeInput.value);
+});
+
+// Annotation color input event
+annotationColorInput.addEventListener('input', () => {
+    currentColor = annotationColorInput.value;
+});
+
+// Undo button click event
+undoBtn.addEventListener('click', () => {
+    if (annotations.length > 0) {
+        const lastAnnotation = annotations.pop(); // Remove the last annotation
+        redoStack.push(lastAnnotation); // Push the removed annotation onto the redo stack
+
+        drawAnnotations(); // Redraw the canvas without the last annotation
+        saveAnnotations(currentPage); // Save the updated annotations
+    } else if (isDrawingPolygon && polygonPoints.length > 0) {
+        polygonPoints.pop(); // Remove the last point added to the polygon
+        drawAnnotations(); // Redraw the canvas without the last point
+    }
+});
+
+// Redo button click event
+redoBtn.addEventListener('click', () => {
+    if (redoStack.length > 0) {
+        const annotation = redoStack.pop(); // Remove the last annotation from redo stack
+        annotations.push(annotation); // Push it back onto the annotations stack
+
+        drawAnnotations(); // Redraw the canvas with the annotation
+        saveAnnotations(currentPage); // Save the updated annotations
+    }
+});
+
+// Confirm annotation button click event
+confirmBtn.addEventListener('click', confirmAnnotation);
+
+// Detect rooms symbols button click event
+function detectRoomsSymbols() {
+    window.location.href = '/third_page';
+}
+
+// Zoom in button click event
+zoomInBtn.addEventListener('click', () => {
+    zoomLevel *= 1.25;
+    updateZoom();
+});
+
+// Zoom out button click event
+zoomOutBtn.addEventListener('click', () => {
+    zoomLevel /= 1.25;
+    updateZoom();
+});
+
+// Best fit button click event
+bestFitBtn.addEventListener('click', () => {
+    zoomLevel = 1;
+    updateZoom();
+});
+
+// Function to update zoom
+function updateZoom() {
+    pdfViewer.style.transform = `scale(${zoomLevel})`;
+    renderPage(currentPage);
+}
+
+// Function to render PDF
+function renderPDF(base64_pdf) {
+    pdfjsLib.getDocument({ data: atob(base64_pdf) }).promise.then(pdf => {
+        pdfDoc = pdf;
+        renderPage(currentPage);
+    });
+}
+
+// Function to render a specific page
+function renderPage(num) {
+    pdfDoc.getPage(num).then(page => {
+        const viewport = page.getViewport({ scale: scale * zoomLevel });
+        pdfCanvas.width = drawingCanvas.width = viewport.width;
+        pdfCanvas.height = drawingCanvas.height = viewport.height;
+
+        const renderContext = {
+            canvasContext: pdfContext,
+            viewport: viewport
+        };
+        page.render(renderContext).promise.then(() => {
+            drawAnnotations();
+        });
+    });
+}
+
+// Function to save annotations
+function saveAnnotations(page_num) {
+    fetch('/annotations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page: page_num, annotations: annotations })
+    });
+}
+
+// Function to load annotations
+function loadAnnotations(page_num) {
+    fetch(`/annotations?page=${page_num}`)
+        .then(response => response.json())
+        .then(data => {
+            annotations = data;
+            drawAnnotations();
+        });
+}
+
+// Function to draw annotations
+function drawAnnotations() {
+    drawContext.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+    annotations.forEach(annotation => {
+        drawContext.strokeStyle = annotation.color;
+        drawContext.lineWidth = annotation.size * zoomLevel;
+        if (annotation.type === 'freehand') {
+            drawContext.beginPath();
+            annotation.points.forEach((point, index) => {
+                const x = point.x * zoomLevel;
+                const y = point.y * zoomLevel;
+                if (index === 0) {
+                    drawContext.moveTo(x, y);
+                } else {
+                    drawContext.lineTo(x, y);
+                }
+            });
+            drawContext.stroke();
+        } else if (annotation.type === 'straightLine') {
+            drawContext.beginPath();
+            drawContext.moveTo(annotation.x1 * zoomLevel, annotation.y1 * zoomLevel);
+            drawContext.lineTo(annotation.x2 * zoomLevel, annotation.y2 * zoomLevel);
+            drawContext.stroke();
+        } else if (annotation.type === 'rectangle') {
+            drawContext.strokeRect(
+                annotation.x * zoomLevel,
+                annotation.y * zoomLevel,
+                annotation.width * zoomLevel,
+                annotation.height * zoomLevel
+            );
+        } else if (annotation.type === 'highlight') {
+            drawContext.fillStyle = annotation.color;
+            drawContext.globalAlpha = 0.3;
+            drawContext.fillRect(
+                annotation.x * zoomLevel,
+                annotation.y * zoomLevel,
+                annotation.width * zoomLevel,
+                annotation.height * zoomLevel
+            );
+            drawContext.globalAlpha = 1.0;
+        } else if (annotation.type === 'polygon') {  // Draw the Polygon
+            drawContext.beginPath();
+            annotation.points.forEach((point, index) => {
+                const x = point.x * zoomLevel;
+                const y = point.y * zoomLevel;
+                if (index === 0) {
+                    drawContext.moveTo(x, y);
+                } else {
+                    drawContext.lineTo(x, y);
+                }
+            });
+            drawContext.closePath();
+            drawContext.stroke();
+        }
+    });
+
+    // Draw polygon in progress
+    if (isDrawingPolygon && polygonPoints.length > 0) {
+        drawContext.beginPath();
+        polygonPoints.forEach((point, index) => {
+            const x = point.x * zoomLevel;
+            const y = point.y * zoomLevel;
+            if (index === 0) {
+                drawContext.moveTo(x, y);
+            } else {
+                drawContext.lineTo(x, y);
+            }
+        });
+        drawContext.stroke();
+    }
+}
+
+// Function to confirm annotation
+function confirmAnnotation() {
+    if (isDrawingPolygon && polygonPoints.length > 2) {
+        // Complete the polygon if it's in progress
+        completePolygon();
+    }
+
+    if (annotations.length === 0) return;
+
+    const lastAnnotation = annotations[annotations.length - 1];
+
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+
+    let minX, minY, maxX, maxY;
+
+    // Determine the bounding box for the annotation
+    if (lastAnnotation.type === 'freehand' || lastAnnotation.type === 'polygon') {
+        [minX, minY, maxX, maxY] = lastAnnotation.points.reduce(
+            ([minX, minY, maxX, maxY], point) => [
+                Math.min(minX, point.x),
+                Math.min(minY, point.y),
+                Math.max(maxX, point.x),
+                Math.max(maxY, point.y)
+            ],
+            [Infinity, Infinity, -Infinity, -Infinity]
+        );
+    } else if (lastAnnotation.type === 'straightLine') {
+        minX = Math.min(lastAnnotation.x1, lastAnnotation.x2);
+        minY = Math.min(lastAnnotation.y1, lastAnnotation.y2);
+        maxX = Math.max(lastAnnotation.x1, lastAnnotation.x2);
+        maxY = Math.max(lastAnnotation.y1, lastAnnotation.y2);
+    } else if (lastAnnotation.type === 'rectangle' || lastAnnotation.type === 'highlight') {
+        minX = lastAnnotation.x;
+        minY = lastAnnotation.y;
+        maxX = lastAnnotation.x + lastAnnotation.width;
+        maxY = lastAnnotation.y + lastAnnotation.height;
+    }
+
+    // Add some padding
+    const padding = 5;
+    minX = Math.max(0, minX - padding);
+    minY = Math.max(0, minY - padding);
+    maxX = Math.min(drawingCanvas.width / zoomLevel, maxX + padding);
+    maxY = Math.min(drawingCanvas.height / zoomLevel, maxY + padding);
+
+    const width = maxX - minX;
+    const height = maxY - minY;
+
+    tempCanvas.width = width * zoomLevel;
+    tempCanvas.height = height * zoomLevel;
+
+    // Draw the PDF background onto the temporary canvas
+    tempCtx.drawImage(
+        pdfCanvas,
+        minX * zoomLevel,
+        minY * zoomLevel,
+        width * zoomLevel,
+        height * zoomLevel,
+        0,
+        0,
+        width * zoomLevel,
+        height * zoomLevel
+    );
+
+    // Draw the annotation on the temporary canvas
+    tempCtx.strokeStyle = lastAnnotation.color;
+    tempCtx.lineWidth = lastAnnotation.size * zoomLevel;
+    tempCtx.fillStyle = lastAnnotation.color;
+
+    if (lastAnnotation.type === 'freehand' || lastAnnotation.type === 'polygon') {
+        tempCtx.beginPath();
+        lastAnnotation.points.forEach((point, index) => {
+            const x = (point.x - minX) * zoomLevel;
+            const y = (point.y - minY) * zoomLevel;
+            if (index === 0) {
+                tempCtx.moveTo(x, y);
+            } else {
+                tempCtx.lineTo(x, y);
+            }
+        });
+        if (lastAnnotation.type === 'polygon') {
+            tempCtx.closePath();
+        }
+        tempCtx.stroke();
+    } else if (lastAnnotation.type === 'straightLine') {
+        tempCtx.beginPath();
+        tempCtx.moveTo((lastAnnotation.x1 - minX) * zoomLevel, (lastAnnotation.y1 - minY) * zoomLevel);
+        tempCtx.lineTo((lastAnnotation.x2 - minX) * zoomLevel, (lastAnnotation.y2 - minY) * zoomLevel);
+        tempCtx.stroke();
+    } else if (lastAnnotation.type === 'rectangle') {
+        tempCtx.strokeRect(
+            0,
+            0,
+            width * zoomLevel,
+            height * zoomLevel
+        );
+    } else if (lastAnnotation.type === 'highlight') {
+        tempCtx.globalAlpha = 0.3;
+        tempCtx.fillRect(
+            0,
+            0,
+            width * zoomLevel,
+            height * zoomLevel
+        );
+        tempCtx.globalAlpha = 1.0;
+    }
+
+    // Generate the image data for the canvas
+    const imageData = tempCanvas.toDataURL('image/png');
+
+    // Fetch call to save the annotation (if required)
+    fetch('/confirm_annotation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            image_data: imageData,
+            page_num: currentPage,
+            x: minX,
+            y: minY,
+            width: width,
+            height: height
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('Annotation saved with ID:', data.id);
+        lastAnnotation.id = data.id;
+        // Show message banner
+        showMessage('Room marked');
+    });
+}
+
+// Function to complete polygon
+function completePolygon() {
+    if (isDrawingPolygon && polygonPoints.length > 2) {
+        annotations.push({
+            type: 'polygon',
+            color: currentColor,
+            size: penSize,
+            points: polygonPoints
+        });
+        isDrawingPolygon = false;
+        polygonPoints = [];
+        drawAnnotations();
+        saveAnnotations(currentPage);
+    }
+}
+
+// Function to show message banner
+function showMessage(message) {
+    const banner = document.createElement('div');
+    banner.textContent = message;
+    banner.style.position = 'fixed';
+    banner.style.top = '20px';
+    banner.style.left = '50%';
+    banner.style.transform = 'translateX(-50%)';
+    banner.style.backgroundColor = '#4CAF50';
+    banner.style.color = 'white';
+    banner.style.padding = '10px 20px';
+    banner.style.borderRadius = '5px';
+    banner.style.zIndex = '1000';
+    document.body.appendChild(banner);
+
+    // Remove the banner after 3 seconds
+    setTimeout(() => {
+        document.body.removeChild(banner);
+    }, 3000);
+}
+
+// Function to trigger the download of an image
+function downloadImage(dataUrl, filename) {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// Resize event listener
+window.addEventListener('resize', () => {
+    if (pdfDoc) {
+        renderPage(currentPage);
+    }
+});
+    </script>
+</body>
+</html>
