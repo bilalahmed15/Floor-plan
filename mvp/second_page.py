@@ -149,16 +149,18 @@ def detect_symbols():
 @app.route('/download_excel', methods=['GET'])
 def download_excel():
     wb = Workbook()
-    
-    for room_id, counts in annotation_images['symbol_counts'].items():
-        ws = wb.create_sheet(title=f"Room {room_id}")
-        ws.append(["Symbol", "Count"])
+    ws = wb.active
+    ws.title = "Room Symbols"
+
+    for room_id, counts in annotation_images.get('symbol_counts', {}).items():
+        ws.append([f"Room {room_id}"])  # Add room heading
+        ws.append(["Symbol", "Count"])  # Add headers for symbols
+
         for symbol, count in counts.items():
-            ws.append([symbol, count])
-    
-    # Remove the default sheet created by openpyxl
-    wb.remove(wb['Sheet'])
-    
+            ws.append([symbol, count])  # Append data for each symbol
+
+        ws.append([])  # Add a blank row between rooms
+
     with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
         wb.save(tmp.name)
         tmp_name = tmp.name
